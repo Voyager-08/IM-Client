@@ -1,0 +1,629 @@
+#include <QPixmap>
+#include <QPalette>         // 包含调色板头文件
+#include <QPainter>         // 包含绘图头文件
+#include <QPainterPath>    // 包含路径头文件
+#include <QGraphicsDropShadowEffect>     // 包含阴影效果头文件
+#include <QHBoxLayout>
+#include <QMessageBox>
+#include <QFocusEvent>
+#include <QMouseEvent>
+#include <QPropertyAnimation>       // 用于切换登录和注册界面
+#include <QEasingCurve>             // 用于动画缓动曲线
+#include <QTransform>               // 用于图形变换
+#include <QFile>
+#include <QDir>
+
+#include "loginwindow.h"
+#include "registerwidget.h"
+#include "src/thread/network/networkmanager.h"
+
+LoginWindow::LoginWindow(QWidget *parent, NetworkManager *networkManager)
+    : QWidget(parent),networkManager(networkManager)
+{
+    initUI();// 初始化界面
+    setBackground();// 设置背景
+    connectUISignals();// 信号槽连接
+    showAvatar();// 显示头像
+    loadUserHistoryInfo();// 加载用户历史登录信息
+}
+
+
+void LoginWindow::initUI()
+{    // 设置窗口标题
+    setWindowTitle("meChat");
+    // 设置窗口固定大小
+    setFixedSize(700, 450);
+    setWindowIcon(QIcon(":/images/10.png"));
+
+    loginWidget=new QWidget(this);// 主登录窗口组件
+    registerWidget=new RegisterWidget(this,networkManager);// 主注册窗口组件
+    stackedWidget=new QStackedWidget(this);// 用于切换登录和注册界面
+    stackedWidget->addWidget(loginWidget);
+    stackedWidget->addWidget(registerWidget);
+    stackedWidget->setGeometry(0,0,this->width(),this->height());
+    
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->addWidget(stackedWidget);
+    setLayout(mainLayout);
+
+    // 设用户头像
+    userAvatar = new QLabel(loginWidget);
+    userAvatar->setPixmap(QPixmap(registerWidget->avatarPath));
+    userAvatar->setGeometry(315, 30, 80, 80);// 设置位置和大小
+    userAvatar->setScaledContents(true);  // 自动缩放图片适应标签大小
+    
+    //设置阴影
+    QGraphicsDropShadowEffect *shadowEf = new QGraphicsDropShadowEffect(loginWidget);
+    shadowEf->setBlurRadius(10);// 阴影模糊大小
+    shadowEf->setColor(QColor(0, 0, 0, 100));// 阴影颜色
+    shadowEf->setOffset(5, 5);// 阴影偏移量(水平, 垂直)
+    userAvatar->setGraphicsEffect(shadowEf);// 设置阴影效果
+
+    // 添加用户名输入框+图标
+    // 添加阴影效果
+    QGraphicsDropShadowEffect *shadowEf_user = new QGraphicsDropShadowEffect(loginWidget);
+    shadowEf_user->setBlurRadius(10);// 阴影模糊大小
+    shadowEf_user->setColor(QColor(0, 0, 0, 100));// 阴影颜色
+    shadowEf_user->setOffset(0, 5);// 阴影偏移量(水平, 垂直)
+
+    userIDLineEdit = new QLineEdit(loginWidget);
+    userIDLineEdit->installEventFilter(this);// 安装事件过滤器,为后续点击做准备
+    userIDLineEdit->setPlaceholderText("账号");
+    userIDLineEdit->setGeometry(200, 150, 300, 33);// 设置距离窗口的坐标为(90px, 100px)和大小宽350px，高33px
+    
+    originalStyle ="QLineEdit {"
+    "font: 17px 'KaiTi', '楷体';"
+    "padding: 5px;"// 设置内边距
+    "border: 2px solid rgba(255, 255, 255, 0.7);"
+    "border-radius: 8px;"
+    "background-color: rgba(255, 255, 255, 0.1);"
+    "color: rgba(0, 0, 0, 1);"
+    "}"
+    "QLineEdit:focus {"
+    "border-color: rgba(255, 255, 255, 1);"
+    "outline: none;"
+    "}";
+    userIDLineEdit->setStyleSheet(originalStyle);
+    userIDLineEdit->setGraphicsEffect(shadowEf_user);// 设置阴影效果
+
+    // 添加用户账号输入框标签图标
+    // 创建独立的 QLabel 作为图标容器
+    QLabel *iconLabel = new QLabel(loginWidget);
+    QPixmap userIDPixmap(":/images/icon_user.png");
+    userIDPixmap = userIDPixmap.scaled(24, 24, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    iconLabel->setPixmap(userIDPixmap);
+    iconLabel->setGeometry(173, 155, 24, 24); // 手动定位到输入框内左侧
+
+    // 添加密码输入框+图标
+    QGraphicsDropShadowEffect *shadowEf_password = new QGraphicsDropShadowEffect(loginWidget);
+    shadowEf_password->setBlurRadius(10);// 阴影模糊大小
+    shadowEf_password->setColor(QColor(0, 0, 0, 100));// 阴影颜色
+    shadowEf_password->setOffset(0, 5);// 阴影偏移量(水平, 垂直)
+
+    passwordLineEdit = new QLineEdit(loginWidget);
+    passwordLineEdit->installEventFilter(this);// 安装事件过滤器,为后续点击做准备
+    passwordLineEdit->setPlaceholderText("密码");
+    passwordLineEdit->setGeometry(200, 210, 300, 33);
+    passwordLineEdit->setEchoMode(QLineEdit::Password);// 设置密码输入框
+    // 设置回车键触发登录
+    
+    passwordLineEdit->setStyleSheet(originalStyle);
+    // 添加阴影效果
+    passwordLineEdit->setGraphicsEffect(shadowEf_password);// 将阴影效果应用到输入框
+    // 添加密码图标
+    QLabel *iconPasswordLabel = new QLabel(loginWidget);
+    QPixmap passwordPixmap(":/images/icon_password.png");
+    passwordPixmap = passwordPixmap.scaled(24, 24, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    iconPasswordLabel->setPixmap(passwordPixmap);
+    iconPasswordLabel->setGeometry(173, 215, 24, 24); // 手动定位到输入框内左侧
+
+    // 添加显示密码复选框
+    showPasswordButton = new QCheckBox("显示密码", loginWidget);
+    showPasswordButton->setGeometry(200, 267, 100, 25);
+    showPasswordButtonStyle =(
+    "QCheckBox {"
+    "    font: 14px 'KaiTi', '楷体';"
+    "    color: rgba(0, 0, 0, 0.8);"
+    "    spacing: 8px;"
+    "}"
+    "QCheckBox:hover {"
+    "    color:  rgba(13, 134, 255, 1);"
+    "}"
+    "QCheckBox::indicator {"
+    "    width: 14px;"
+    "    height: 14px;"
+    "    border-radius: 9px;"
+    "    border: 2px solid #ccc;"
+    "    background: white;"
+    "}"
+    "QCheckBox::indicator:hover {"
+    "    background: rgba(13, 134, 255, 0.68);"
+    "    border-color: rgba(13, 134, 255, 1);"
+    "}"
+    "QCheckBox::indicator:checked {"
+    "    border: 2px solid rgba(112, 112, 112, 1);"
+    "    image: url(:/images/icon_check.png);"
+    "}"
+    "QCheckBox::indicator:checked:hover {"
+    "    border: 2px solid rgba(112, 112, 112, 1);"
+    "    image: url(:/images/icon_check.png);"
+    "}");
+    showPasswordButton->setStyleSheet(showPasswordButtonStyle);
+    showPasswordButton->setCursor(Qt::PointingHandCursor); // 设置鼠标悬停时的手型光标
+    
+    // 添加忘记密码按钮
+    forgetPasswordButton = new QPushButton(loginWidget);
+    forgetPasswordButton->setText("忘记密码？");
+    forgetPasswordButton->setGeometry(420, 267, 80, 25);
+    forgetPasswordButton->setStyleSheet(
+    "QPushButton {"
+    "font: 15px 'KaiTi', '楷体';"
+    "color: rgba(1, 1, 1, 0.7);"
+    "border: none;"
+    "}"
+    "QPushButton:hover {"
+    "color: rgba(0, 38, 255, 1);"
+    "}");
+    forgetPasswordButton->setAutoDefault(false); // 防止按钮响应回车键
+    forgetPasswordButton->setCursor(Qt::PointingHandCursor); // 设置鼠标悬停时的手型光标
+
+    // 添加登录按钮
+    // 创建阴影效果
+    QGraphicsDropShadowEffect *shadowEf_login = new QGraphicsDropShadowEffect(loginWidget);
+    shadowEf_login->setBlurRadius(10);// 阴影模糊大小
+    shadowEf_login->setColor(QColor(0, 0, 0, 100));
+    shadowEf_login->setOffset(0, 5);// 阴影偏移量(水平, 垂直)
+    
+    loginButton = new QPushButton(loginWidget);
+    loginButton->setText("登录");
+    loginButton->setGeometry(200, 350, 100, 33);
+    loginButton->setStyleSheet(
+    "QPushButton {"
+    "font: 17px;"
+    "font-family: 'KaiTi', '楷体'; "
+    "color: rgba(250, 250, 250, 0.8);"
+    "border: none;"
+    "border-radius: 5px;"
+    "border: 2px solid rgba(255, 255, 255, 0.6);"
+    "border-radius: 8px;"
+    "}"
+    "QPushButton:hover {"
+    "border-color: rgba(255, 255, 255, 1);"
+    "color: rgba(255, 255, 255, 1);"
+    "}"
+    "QPushButton:pressed {"
+    "background-color: rgba(33, 149, 243, 1);"
+    "padding: 2px;"
+    "padding-top: 8px;  /* 微下沉效果 */"
+    "padding-bottom: 4px;"
+    "}");
+    loginButton->setGraphicsEffect(shadowEf_login);// 将阴影效果应用到按钮
+    loginButton->setAutoDefault(true); // 设置为默认按钮
+
+    // 添加注册按钮
+    QGraphicsDropShadowEffect *shadowEf_register = new QGraphicsDropShadowEffect(loginWidget);
+    shadowEf_register->setBlurRadius(10);// 阴影模糊大小
+    shadowEf_register->setColor(QColor(0, 0, 0, 100));
+    shadowEf_register->setOffset(0, 5);// 阴影偏移量(水平, 垂直)
+    registerButton = new QPushButton(loginWidget);
+    registerButton->setText("注册");
+    registerButton->setGeometry(400, 350, 100, 33);
+    registerButton->setStyleSheet(
+    "QPushButton {"
+    "font: 17px;"
+    "font-family: 'KaiTi', '楷体'; "
+    "color: rgba(255, 255, 255, 0.8);"
+    "border: none;"
+    "border-radius: 5px;"
+    "border: 2px solid rgba(255, 255, 255, 0.6);"
+    "border-radius: 8px;"
+    "}"
+    "QPushButton:hover {"
+    "border-color: rgba(255, 255, 255, 1);"
+    "color: rgba(255, 255, 255, 1);"
+    "}"
+    "QPushButton:pressed {"
+    "padding-top: 10px;  /* 微下沉效果 */"
+    "padding-bottom: 4px;"
+    "background-color: rgba(255, 238, 0, 0.45);"
+    "}"); 
+    registerButton->setGraphicsEffect(shadowEf_register);// 将阴影效果应用到按钮
+    registerButton->setAutoDefault(false); // 防止按钮响应回车键
+}
+
+void LoginWindow::setBackground()
+{
+    // 加载并缩放背景图以适应窗口大小
+    QPixmap bg(":/images/6.png");
+    if (bg.isNull()) {
+        qWarning() << "Failed to load background image!";
+        return;
+    }
+
+    // 缩放图片以填充整个窗口（保持比例可选）
+    bg = bg.scaled(size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+    // 设置为窗口背景
+    QPalette palette;
+    palette.setBrush(QPalette::Window, bg);
+    setPalette(palette);
+    setAutoFillBackground(true);
+}
+
+bool LoginWindow::login()//登录功能
+{
+    // 使用队列连接确保在网络线程中执行
+    QMetaObject::invokeMethod(networkManager, &NetworkManager::connectToServer, Qt::QueuedConnection);
+    // 检查输入框
+    if(resetLineEdit==1) return false;// 如果是重置输入框状态，则不执行登录操作
+    //点击登录就需要记住输入的账号和密码
+    savedUserID = userIDLineEdit->text();
+    savedPassword = passwordLineEdit->text();
+    qDebug() << "用户ID:" << savedUserID << "密码:" << savedPassword;
+    if(checkInputFields()) return false;// 检查输入框
+    if(!networkManager->isConnected()) // 检查是否已连接到服务器
+    {
+        loginError("服务器连接失败!");
+        return false;// 如果未连接，则不执行登录操作
+    }
+
+    // 先断开旧的连接，再建立新的连接，确保不重复
+    disconnect(networkManager, &NetworkManager::loginSuccess, this, &LoginWindow::loginChatwindow);
+    disconnect(networkManager, &NetworkManager::loginFailed, this, &LoginWindow::loginError);
+    connect(networkManager, &NetworkManager::loginSuccess, this, &LoginWindow::loginChatwindow, Qt::QueuedConnection);
+    connect(networkManager, &NetworkManager::loginFailed, this, &LoginWindow::loginError, Qt::QueuedConnection);
+    // 使用队列连接确保在网络线程中执行
+    QMetaObject::invokeMethod(networkManager, "sendLoginRequest", Qt::QueuedConnection,
+                              Q_ARG(QString, savedUserID),
+                              Q_ARG(QString, savedPassword));  
+    return false;
+}
+
+#include <QFile>
+#include <QDir>      // 必须包含，用于创建文件夹
+#include <QFileInfo> // 可选，用于获取文件信息
+#include <QDebug>
+
+void LoginWindow::loadUserHistoryInfo()
+{
+    QString filePath = "./Data/loginInfo/userHistory.txt";
+    
+    // 1. 【核心修改】确保目录存在
+    QDir dir("./Data/loginInfo");
+    if (!dir.exists()) {
+        // mkpath 可以递归创建多级目录（如果 Data 也不存在，它会一起创建）
+        if (!dir.mkpath(".")) {
+            qDebug() << "错误：无法创建目录 ./Data/loginInfo";
+            return;
+        }
+    }
+
+    // 2. 定义文件对象
+    QFile file(filePath);
+
+    // 3. 如果文件不存在，先创建一个空文件（可选，防止读取时文件不存在报错）
+    if (!file.exists()) {
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            qDebug() << "错误：无法创建文件" << file.errorString();
+            return;
+        }
+        file.close();
+        qDebug() << "文件不存在，已创建新文件";
+        // 注意：新创建的文件是空的，下面的读取逻辑不会执行，直接结束函数
+        return; 
+    }
+
+    // 4. 打开文件进行读取
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qDebug() << "错误：无法打开文件进行读取" << file.errorString();
+        return;
+    }
+
+    // 5. 读取并解析内容
+    // 建议：如果想读取“上一次”登录的用户，通常读取最后一行。
+    // 这里保持你的逻辑，读取第一行（或者你可以把读取到的内容赋值给变量，循环结束后再 setText）
+    
+    QString lastUserID;
+    QString lastPassword;
+
+    while (!file.atEnd()) {
+        QString line = file.readLine().trimmed();
+        if (!line.isEmpty()) {
+            // 解析格式 userID:password
+            // 使用 0,0 和 1,1 确保只截取特定段，防止密码里也有冒号
+            lastUserID = line.section(':', 0, 0);
+            lastPassword = line.section(':', 1, 1); // 从第1段取到最后，兼容密码含冒号的情况
+        }
+    }
+    
+    file.close();
+
+    // 6. 设置到输入框 (在循环外设置，确保显示的是读取到的最后一行数据)
+    if (!lastUserID.isEmpty()) {
+        userIDLineEdit->setText(lastUserID);
+        passwordLineEdit->setText(lastPassword);
+        qDebug() << "加载历史记录成功 - 账号:" << lastUserID;
+    }
+}
+void LoginWindow::loginError(const QString &errorString)
+{
+    resetLineEdit=1;// 设置重置输入框标志
+    qDebug() << "登录失败:" << errorString;
+    // 清空输入框以显示错误提示
+    disconnect(userIDLineEdit, &QLineEdit::textChanged, this, &LoginWindow::showAvatar);
+    userIDLineEdit->clear();
+    passwordLineEdit->clear();
+    //这里阻止plainTextEdit发送文本框内容改变信号
+    connect(userIDLineEdit, &QLineEdit::textChanged, this, &LoginWindow::showAvatar);
+    // 在账号输入框中显示错误提示
+    userIDLineEdit->setPlaceholderText(errorString);
+    userIDLineEdit->setStyleSheet("QLineEdit {"
+    "font: 16px 'KaiTi', '楷体';"
+    "padding: 5px;"
+    "border: 2px solid rgba(255, 0, 0, 1);"
+    "border-radius: 8px;"
+    "background-color: rgba(255, 255, 255, 0.6);"
+    "color: rgba(255, 0, 0, 1);"
+    "}");
+    passwordLineEdit->setPlaceholderText(errorString);
+    passwordLineEdit->setStyleSheet("QLineEdit {"
+    "font: 16px 'KaiTi', '楷体';"
+    "padding: 5px;"
+    "border: 2px solid rgba(255, 0, 0, 1);"
+    "border-radius: 8px;"
+    "background-color: rgba(255, 255, 255, 0.6);"
+    "color: rgba(255, 0, 0, 1);"
+    "}");
+    // 设置显示密码复选框为高亮不可用状态
+    showPasswordButton->setStyleSheet(showPasswordButtonStyle);
+    showPasswordButton->setEnabled(false);
+}
+
+void LoginWindow::connectUISignals()// 信号槽连接
+{
+    connect(registerWidget->backButton, &QPushButton::clicked, this, &LoginWindow::switchToLogin);
+    connect(registerWidget, &RegisterWidget::registrationSucceeded,this, &LoginWindow::registerSuccess);
+    connect(loginButton, &QPushButton::clicked, this, &LoginWindow::login);
+    connect(userIDLineEdit, &QLineEdit::returnPressed, this, &LoginWindow::login);
+    connect(passwordLineEdit, &QLineEdit::returnPressed, this, &LoginWindow::login);
+    connect(registerButton, &QPushButton::clicked, this, &LoginWindow::switchToRegister);
+    connect(showPasswordButton, &QCheckBox::toggled, this, &LoginWindow::togglePasswordVisibility);
+    connect(forgetPasswordButton, &QPushButton::clicked, this, &LoginWindow::onForgetPassword);
+    //账号输入框内容改变时显示头像
+    connect(userIDLineEdit, &QLineEdit::textChanged, this, &LoginWindow::showAvatar);
+}
+
+void LoginWindow::registerSuccess()// 注册成功
+{
+    switchToLogin();
+    QString newUserID = registerWidget->getUserID();
+    userIDLineEdit->setText(newUserID); // 将注册成功后返回的用户ID设置到登录窗口的用户名输入框中
+    passwordLineEdit->setText("");
+    userAvatar->setPixmap(QPixmap(registerWidget->avatarPath));// 显示注册成功后的用户头像
+    qDebug()<<"用户头像:"<<registerWidget->avatarPath;
+}
+
+void LoginWindow::togglePasswordVisibility()// 切换密码可见性
+{
+    if (showPasswordButton->isChecked())passwordLineEdit->setEchoMode(QLineEdit::Normal);
+    else passwordLineEdit->setEchoMode(QLineEdit::Password);
+}
+
+void LoginWindow::onForgetPassword()// 忘记密码处理
+{
+    QMessageBox::information(this, "忘记密码", "请通过注册邮箱或手机号找回密码。");
+}
+
+bool LoginWindow::eventFilter(QObject *obj, QEvent *event)
+{
+    // 检查是否是监控的 QLineEdit 且事件是焦点进入
+    if ((obj == userIDLineEdit|| obj == passwordLineEdit  )  &&event->type() == QEvent::FocusIn) {
+        resetLineEditStyle((qobject_cast<QLineEdit*>(obj)));
+        return true; // 表示事件已处理（但通常返回 false 更安全）
+    }
+    // 其他事件交给父类处理
+    return QWidget::eventFilter(obj, event);
+    // 如果返回 true，则表示事件已处理，不再传递给父类
+}
+
+void LoginWindow::mousePressEvent(QMouseEvent *event)
+{
+    // 当点击窗口任意位置时，如果有错误状态则重置
+    if (resetLineEdit == 1) {
+        resetLineEditStyle(userIDLineEdit);
+    }
+    // 调用父类的鼠标按下事件处理
+    QWidget::mousePressEvent(event);
+}
+
+void LoginWindow::resetLineEditStyle(QLineEdit *lineEdit )// 重置输入框样式
+{
+    showPasswordButton->setStyleSheet(showPasswordButtonStyle);
+    showPasswordButton->setCursor(Qt::PointingHandCursor); // 设置鼠标悬停时的手型光标
+    showPasswordButton->setEnabled(true);
+    userIDLineEdit->setPlaceholderText("用户名");
+    passwordLineEdit->setPlaceholderText("密码");
+    userIDLineEdit->setStyleSheet(originalStyle);
+    passwordLineEdit->setStyleSheet(originalStyle);
+    if(resetLineEdit==1)
+    {
+        resetLineEdit=0;// 重置标志清零
+        userIDLineEdit->setText(savedUserID);
+        passwordLineEdit->setText(savedPassword);
+        // 恢复显示密码按钮状态
+    }
+}
+
+bool LoginWindow::checkInputFields()// 检查输入框
+{
+    if(savedUserID.isEmpty())
+    {
+        userIDLineEdit->setPlaceholderText("账号不能为空！");
+        userIDLineEdit->setStyleSheet("QLineEdit {"
+        "font: 16px 'KaiTi', '楷体';"
+        "padding: 5px;"
+        "border: 2px solid rgba(255, 0, 0, 1);"
+        "border-radius: 8px;"
+        "background-color: rgba(255, 255, 255, 0.6);"
+        "color: rgba(255, 0, 0, 1);"
+        "}");
+    }
+    if(savedPassword.isEmpty())
+    {
+        passwordLineEdit->setPlaceholderText("密码不能为空！");
+        passwordLineEdit->setStyleSheet("QLineEdit {"
+        "font: 16px 'KaiTi', '楷体';"
+        "padding: 5px;"
+        "border: 2px solid rgba(255, 0, 0, 1);"
+        "border-radius: 8px;"
+        "background-color: rgba(255, 255, 255, 0.4);"
+        "color: rgba(255, 0, 0, 1);"
+        "}");
+        // 设置显示密码复选框为高亮不可用状态
+        showPasswordButton->setStyleSheet(showPasswordButtonStyle);
+        showPasswordButton->setEnabled(false);
+    }
+    if(userIDLineEdit->text().isEmpty()||passwordLineEdit->text().isEmpty())
+    {
+        qDebug() << "请填写账号和密码！";
+        return true;// 返回true,说明有一个没有填写，则不执行登录操作
+    }
+    return false;// 返回false，表示两个输入框都已填写，继续执行登录操作
+}
+
+void LoginWindow::showAvatar()
+{
+    QString userID = userIDLineEdit->text();
+    QString avatarPath;
+    QPixmap pixmap;
+    
+    // 从同目录images/avatar/中查找头像路径
+    avatarPath = QDir::currentPath() + "/images/avatar/" + userID + ".png";
+    
+    if (QFile::exists(avatarPath))
+    {
+         pixmap = QPixmap(avatarPath);
+         qDebug() << ".\n头像加载成功!";
+         qDebug() << "头像路径:" << avatarPath;
+    }
+     else
+     {
+         qDebug() << ".\n头像加载失败,文件不存在或使用了默认头像!";
+         qDebug() << "头像路径:" << avatarPath;
+         pixmap = QPixmap(":/images/avatar/default.png");
+     }
+
+    // 创建圆角头像
+    QPixmap roundedAvatar(80, 80);
+    roundedAvatar.fill(Qt::transparent);
+    QPainter painter(&roundedAvatar);
+    painter.setRenderHint(QPainter::Antialiasing);
+    
+    // 创建圆形路径
+    QPainterPath path;
+    path.addRoundedRect(0, 0, 80, 80, 5, 5);  // 圆角矩形
+    painter.setClipPath(path); // 设置剪切路径
+
+    // 绘制缩放后的头像
+    painter.drawPixmap(0, 0, pixmap.scaled(80, 80, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+    
+    userAvatar->setPixmap(roundedAvatar);
+}
+
+void LoginWindow::switchToRegister()//切换到注册界面
+{
+    // 创建动画
+    QPropertyAnimation *animation = new QPropertyAnimation(stackedWidget, "geometry");
+    animation->setDuration(600);
+    animation->setEasingCurve(QEasingCurve::OutCubic);
+    
+    // 获取当前几何信息
+    QRect startGeometry = stackedWidget->geometry();
+    QRect endGeometry = startGeometry;
+    
+    // 向上翻转到注册页面
+    endGeometry.moveTop(-stackedWidget->height()/2);
+    
+    animation->setStartValue(startGeometry);
+    animation->setEndValue(endGeometry);
+    
+    // 连接动画完成信号，在动画结束后切换页面
+    connect(animation, &QPropertyAnimation::finished, [=]() {
+        stackedWidget->setCurrentWidget(registerWidget);
+        
+        // 创建第二个动画，从上往下翻回来
+        QPropertyAnimation *animation2 = new QPropertyAnimation(stackedWidget, "geometry");
+        animation2->setDuration(200);
+        animation2->setEasingCurve(QEasingCurve::InCubic);
+        
+        QRect startGeom = endGeometry;
+        QRect endGeom = startGeometry;
+        startGeom.moveTop(height());
+        endGeom.moveTop(0);
+        
+        animation2->setStartValue(startGeom);
+        animation2->setEndValue(endGeom);
+        
+        animation2->start(QAbstractAnimation::DeleteWhenStopped);
+    });
+    
+    animation->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void LoginWindow::switchToLogin()//切换到登录界面
+{
+    // 创建动画
+    QPropertyAnimation *animation = new QPropertyAnimation(stackedWidget, "geometry");
+    animation->setDuration(600);
+    animation->setEasingCurve(QEasingCurve::OutCubic);
+    
+    // 获取当前几何信息
+    QRect startGeometry = stackedWidget->geometry();
+    QRect endGeometry = startGeometry;
+    
+    // 向下翻转到登录页面
+    endGeometry.moveTop(stackedWidget->height());
+    
+    animation->setStartValue(startGeometry);
+    animation->setEndValue(endGeometry);
+    
+    // 连接动画完成信号，在动画结束后切换页面
+    connect(animation, &QPropertyAnimation::finished, [=]() {
+        stackedWidget->setCurrentWidget(loginWidget);
+        
+        // 创建第二个动画，从下往上翻回来
+        QPropertyAnimation *animation2 = new QPropertyAnimation(stackedWidget, "geometry");
+        animation2->setDuration(200);
+        animation2->setEasingCurve(QEasingCurve::InCubic);
+        
+        QRect startGeom = endGeometry;
+        QRect endGeom = startGeometry;
+        startGeom.moveTop(-height()/2);
+        endGeom.moveTop(0);
+        
+        animation2->setStartValue(startGeom);
+        animation2->setEndValue(endGeom);
+        
+        animation2->start(QAbstractAnimation::DeleteWhenStopped);
+    });
+    
+    animation->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void LoginWindow::loginChatwindow(const QString userID)
+{
+    QFile file("./Data/loginInfo/userHistory.txt");
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qDebug() << "Failed to open file for writing";
+        return;
+    }
+    //覆盖写入用户ID和密码
+    file.write(userID.toStdString().c_str());
+    file.write(":");
+    file.write(savedPassword.toStdString().c_str());
+    file.close();
+    qDebug() << "登录成功，用户ID:" << userID;
+    // 发送登录成功信号给主窗口，主窗口负责创建 ChatWindow 和页面切换
+    emit userLoggedIn(userID, savedPassword);
+}
